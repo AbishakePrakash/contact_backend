@@ -1,9 +1,5 @@
 const mysql = require("mysql");
 
-const sqlUser = process.env.DB_USER;
-const sqlPassword = process.env.DB_PASSWORD;
-const sqlName = process.env.DB_NAME;
-
 const connectDB = () => {
   return new Promise((resolve, reject) => {
     const connection = mysql.createConnection({

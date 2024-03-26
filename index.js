@@ -5,7 +5,8 @@ const cors = require("cors");
 const connectDB = require("./config/dbConnection");
 const userRoutes = require("./routes/userRoutes");
 const db = require("./db");
-// connectDB();
+
+connectDB();
 
 const app = express();
 const port = 3000;
@@ -17,7 +18,6 @@ function getUsersFromDatabase() {
 
 db.query("SELECT 1")
   .then(() => {
-    console.log("DB Connection succeeded");
     app.listen(port, () => {
       console.log(`Get a look at ${port}`);
     });
