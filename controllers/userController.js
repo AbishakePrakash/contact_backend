@@ -1,137 +1,291 @@
-const asyncHandler = require("express-async-handler");
-const User = require("../models/userModel");
-const bcrypt = require("bcrypt")
-const jwt = require("jsonwebtoken")
+const express = require("express");
+const router = express.Router();
+const mysql = require("mysql2/promise");
+const connectDB = require("../config/dbConnection");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 
-// @GET - Get All Contacts      @path - /api/contacts           @access - private
-const GET_ALL_USERS = asyncHandler(async (req, res) => {
-    console.log(req.header);
-    const user = await User.find();
-    res.status(200).json(user)
-})
+const pool = require("../db");
 
-// @GET - Get All Contacts      @path - /api/contacts           @access - private
-const GET_AN_USER = asyncHandler(async (req, res) => {
-    const user = await User.findById(req.params.id);
-    res.status(200).json(user)
-})
+const GET_ALL_USERS = async (req, res) => {
+  const [rows] = await pool
+    .query("SELECT * FROM users")
+    .catch((err) => console.log("Error while fetching data: ", err));
+  res.status(200).send(rows);
+};
 
-// @GET - Get All Contacts      @path - /api/contacts           @access - private
-const UPDATE_AN_USER = asyncHandler(async (req, res) => {
-    const user = await User.findById(req.params.id);
+const GET_AN_USER = async (req, res) => {
+  pool
+    .query(`SELECT * FROM users WHERE id = ${req.params.id}`)
+    .then((data) => res.send(data[0]))
+    .catch((err) => console.log("Error while fetching data: ", err));
+};
 
-    if (!user) {
-        res.status(404)
-        throw new Error("Contact not found")
-    }
+const REGISTER_USER = async (req, res) => {
+  const { username, email, password } = req.body;
 
-    console.log("User found");
+  if (!username || !email || !password) {
+    res.statusCode(400);
+    throw new Error("All fields are mandatory");
+  }
 
-    try {
-        const updatedUser = await User.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true }
+  const hashedPassword = await bcrypt.hash(password, 10);
+  // console.log("hashedPassword: ", hashedPassword, "password: ", password);
+
+  const [[emailExists]] = await pool.query(
+    `SELECT COUNT(*) AS email_count FROM users WHERE email = ${JSON.stringify(
+      email
+    )}`
+  );
+
+  const currentdate = new Date();
+  const timestamp =
+    currentdate.getDate() +
+    "/" +
+    (currentdate.getMonth() + 1) +
+    "/" +
+    currentdate.getFullYear() +
+    " " +
+    currentdate.getHours() +
+    ":" +
+    currentdate.getMinutes() +
+    ":" +
+    currentdate.getSeconds();
+
+  if (emailExists.email_count > 0) {
+    res.status(400).send("User already registered");
+    throw new Error("User already registered");
+  } else {
+    console.log();
+
+    pool
+      .query(
+        `INSERT INTO users (username, email, password) values (
+          ${JSON.stringify(username)}, 
+          ${JSON.stringify(email)}, 
+          ${JSON.stringify(hashedPassword)}
+        );`
+      )
+      .then((data) => {
+        console.log("Record created Successfully!");
+        res.status(200).send("Record created Successfully!");
+      })
+      .catch((err) => console.log("Error while fetching data: ", err));
+  }
+};
+
+const LOGIN_USER = async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    res.status(400);
+    throw new Error("All fields are mandatory");
+  }
+
+  const [[User]] = await pool.query(
+    `SELECT * FROM users WHERE email = ${JSON.stringify(email)}`
+  );
+
+  console.log(User);
+
+  if (!User) {
+    res.status(400).send("User not found");
+    throw new Error("User not found");
+  }
+
+  console.log("toke: ", process.env.ACCESS_TOKEN);
+  console.log(await bcrypt.compare(password, User.password));
+
+  if (User && (await bcrypt.compare(password, User.password))) {
+    const accessToken = jwt.sign(
+      {
+        User: {
+          username: User.username,
+          email: User.email,
+          id: User._id,
+        },
+      },
+      process.env.ACCESS_TOKEN,
+      { expiresIn: "15m" }
+    );
+    res.status(200).json({
+      id: User.id,
+      username: User.username,
+      email: User.email,
+      accessToken,
+    });
+  } else {
+    res.status(401);
+    throw new Error("Invalid Username or Password");
+  }
+};
+
+const UPDATE_AN_USER = async (req, res) => {
+  const { username, password } = req.body;
+
+  var hashedPassword = null;
+
+  if (password) {
+    hashedPassword = await bcrypt.hash(password, 10);
+  }
+  console.log("body: ", username, hashedPassword);
+
+  const [[User]] = await pool.query(
+    `SELECT * FROM users WHERE id = ${req.params.id}`
+  );
+
+  console.log(User);
+
+  if (!User) {
+    res.status(404).send("User not found");
+    throw new Error("User not found");
+  }
+
+  console.log("User found");
+
+  const currentdate = new Date();
+  const timestamp =
+    currentdate.getDate() +
+    "/" +
+    (currentdate.getMonth() + 1) +
+    "/" +
+    currentdate.getFullYear() +
+    " " +
+    currentdate.getHours() +
+    ":" +
+    currentdate.getMinutes() +
+    ":" +
+    currentdate.getSeconds();
+
+  // Editting the same row
+  // pool
+  //   .query(
+  //     `UPDATE Users SET
+  //     username =  ${JSON.stringify(username)},
+  //     updatedAt = ${JSON.stringify(timestamp)}
+  //     WHERE id =  ${User.id}`
+  //   )
+  //   .then((data) => {
+  //     console.log("User updated successfully: ", data[0].info);
+  //     res.status(200).send("Record updated Successfully!");
+  //   })
+  //   .catch((err) => console.log("Error while updating User: ", err));
+
+  // Adding new row
+
+  pool
+    .query("Start Transaction")
+    .then(() => {
+      if (username) {
+        return pool.query(
+          `INSERT INTO update_history (record_id, fieldname, previous_status, new_status)
+          VALUES (
+            ${User.id}, 
+            "Username", 
+            ${JSON.stringify(User.username)}, 
+            ${JSON.stringify(username)}
+            );`
         );
-        console.log("User updated successfully");
-
-        res.status(200).json(updatedUser)
-    } catch (error) {
-        console.log('err', error);
-    }
-})
-
-// @GET - Get All Contacts      @path - /api/contacts           @access - private
-const DELETE_AN_USER = asyncHandler(async (req, res) => {
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-        res.status(404)
-        throw new Error("Contact not found")
-    }
-
-    console.log("User found");
-
-    try {
-        await User.deleteOne({ _id: req.params.id })
-        console.log("User deleted");
-    } catch (error) {
-        console.log("error", error);
-    }
-    res.status(200).json(User)
-})
-
-// @POST - Register a User      @path - /api/users/register     @access - public
-const REGISTER_USER = asyncHandler(async (req, res) => {
-    const { username, email, password } = req.body
-    if (!username || !email || !password) {
-        res.statusCode(400)
-        throw new Error("All fields are mandatory")
-    };
-
-    const emailAvailable = await User.findOne({ email });
-
-    if (emailAvailable) {
-        res.status(400)
-        throw new Error("User already registered")
-    };
-
-    const hashedPassword = await bcrypt.hash(password, 10)
-    console.log("hashedPassword: ", hashedPassword, "password: ", password);
-
-    const user = await User.create({
-        username, email, password: hashedPassword
+      }
+      if (password) {
+        return pool.query(
+          `INSERT INTO update_history (record_id, fieldname, previous_status, new_status)
+          VALUES (
+            ${User.id}, 
+            "Password", 
+            ${JSON.stringify(User.password)}, 
+            ${JSON.stringify(hashedPassword)}
+            );`
+        );
+      }
     })
-
-    console.log(`User created: ${user}`);
-
-    if (user) {
-        res.status(201).json({ _id: user.id, email: user.email, username: user.username })
-    } else {
-        res.status(400)
-        throw new Error("User data is not valid")
-    }
-
-    res.json({ message: "Register the User" })
-});
-
-// @POST - Login a User         @path - /api/users/login        @access - public
-const LOGIN_USER = asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-        res.status(400);
-        throw new Error("All fields are mandatory");
-    }
-
-    const user = await User.findOne({ email })
-
-    // if (!user) {
-    //     res.status(400);
-    //     throw new Error("User not found")
-    // }
-
-    if (user && (await bcrypt.compare(password, user.password))) {
-
-        const accessToken = jwt.sign({
-            user: {
-                username: user.username,
-                email: user.email,
-                id: user._id,
-            },
-        }, process.env.ACCESS_TOKEN,
-            { expiresIn: "15m" }
+    .then(() => {
+      if (username) {
+        return pool.query(
+          `UPDATE users SET 
+            username = ?,
+            updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+          [username, User.id]
         );
-        res.status(200).json({ accessToken, user });
-    } else {
-        res.status(401);
-        throw new Error("Invalid Username or Password");
-    }
-});
+      }
+      if (password) {
+        return pool.query(
+          `UPDATE users SET 
+          password = ?,
+          updatedAt = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+          [hashedPassword, User.id]
+        );
+      }
+    })
+    // .then(() => {
+    //   return pool.query(
+    //     `INSERT INTO users (username, email, password, createdAt, updatedAt ) values (
+    //       ${JSON.stringify(username ? username : User.username)},
+    //       ${JSON.stringify(User.email)},
+    //       ${JSON.stringify(hashedPassword ? hashedPassword : User.password)},
+    //       ${JSON.stringify(timestamp)},
+    //       ${JSON.stringify(timestamp)})`
+    //   );
+    // })
+    .then(() => {
+      return pool.query("Commit");
+    })
+    .then(() => {
+      console.log(
+        "Data Updated and New record has been created in Update_history"
+      );
+      res
+        .status(200)
+        .send("Data Updated and New record has been created in Update_history");
+    })
+    .catch((error) => {
+      pool.query("Rollback");
+      console.error("Error occurred:", error);
+      res.status(500).send("An error occurred while updating and inserting.");
+    });
+};
 
-// @POST - Current User Info    @path - /api/users/current      @access - private
-const CURRENT_USER_INFO = asyncHandler(async (req, res) => {
-    console.log(req.user);
-    res.json(req.user)
-});
+const DELETE_AN_USER = async (req, res) => {
+  const [[User]] = await pool.query(
+    `SELECT * FROM users WHERE id = ${req.params.id}`
+  );
 
-module.exports = { REGISTER_USER, LOGIN_USER, CURRENT_USER_INFO, GET_ALL_USERS, GET_AN_USER, UPDATE_AN_USER, DELETE_AN_USER }
+  if (!User) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  console.log("User found");
+
+  // const currentdate = new Date();
+  // const timestamp =
+  //   currentdate.getDate() +
+  //   "/" +
+  //   (currentdate.getMonth() + 1) +
+  //   "/" +
+  //   currentdate.getFullYear() +
+  //   " " +
+  //   currentdate.getHours() +
+  //   ":" +
+  //   currentdate.getMinutes() +
+  //   ":" +
+  //   currentdate.getSeconds();
+
+  pool
+    .query(`DELETE FROM Users WHERE id =  ${User.id}`)
+    .then((data) => {
+      console.log("User deleted successfully: ");
+      res.status(200).send("User deleted Successfully!");
+    })
+    .catch((err) => console.log("Error while updating User: ", err));
+};
+
+module.exports = {
+  GET_ALL_USERS,
+  GET_AN_USER,
+  REGISTER_USER,
+  LOGIN_USER,
+  UPDATE_AN_USER,
+  DELETE_AN_USER,
+};
