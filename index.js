@@ -1,40 +1,80 @@
 const express = require("express");
-const errorHandler = require("./middleware/errorHandler");
-const dotenv = require("dotenv").config();
-const cors = require("cors");
-const connectDB = require("./config/dbConnection");
+const mysql = require("mysql2/promise"); // Import mysql2/promise instead of mysql
 const userRoutes = require("./routes/userRoutes");
-const db = require("./db");
-
-connectDB();
+require("dotenv").config();
 
 const app = express();
-const port = 3000;
 
-function getUsersFromDatabase() {
-  // Simulate an error condition (e.g., database connection failure)
-  throw new Error("Unable to fetch users from the database");
-}
+// API Log
+app.use((req, res, next) => {
+  const start = Date.now();
 
-db.query("SELECT 1")
-  .then(() => {
-    app.listen(port, () => {
-      console.log(`Get a look at ${port}`);
-    });
-  })
-  .catch((err) => {
-    console.log("DB Connection failed. \n" + err);
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const fullUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+    console.log(req.method, res.statusCode, duration + "ms", fullUrl);
   });
 
-app.use(cors({ origin: "*" }));
-app.use(express.json());
-app.get("/", (req, res) => {
-  res
-    .status(200)
-    .send("Hey there. You have successfully connected to the Server..!");
+  next();
 });
 
-// app.use("/api/contacts", require("./routes/contactRoutes"));
+// Defining SQL Connection
+const connectionPromise = mysql.createConnection({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
+
+// Connecting SQL db using promise
+(async () => {
+  try {
+    const connection = await connectionPromise;
+    console.log("Hooked up to the Server with " + connection.threadId);
+  } catch (error) {
+    console.error("Error connecting to MySQL database: " + error);
+  }
+})();
+
+// Connection ID
+app.get("/linkID", async (req, res) => {
+  try {
+    // Execute SELECT connection_id() query
+    const connection = await connectionPromise;
+    const [rows, fields] = await connection.execute(
+      "SELECT connection_id() AS connectionId"
+    );
+    // Extract connection ID from results and send it as JSON response
+    const connectionId = rows[0].connectionId;
+    res.status(200).json({ connectionId });
+  } catch (error) {
+    console.error("Error executing query: " + error);
+    res.status(500).send("Error executing query");
+  }
+});
+
+// Server Status Checker
+app.get("/", async (req, res) => {
+  try {
+    res.status(200).send("Oh mierda, aquí vamos de nuevo.");
+  } catch (error) {
+    console.error("Error connecting DB: " + error);
+    res.status(500).send("Error connecting DB");
+  }
+});
+
+// Boot Server
+const port = 3000;
+app.listen(port, () => {
+  console.log(`Take a look at ${port}`);
+});
+
+//Routes
+
 app.use("/api/users", userRoutes);
+
+// app.use("/api/contacts", require("./routes/contactRoutes"));
+
 // app.use("/api/global", require('./routes/globalRoutes'))
+
 // app.use(errorHandler);
